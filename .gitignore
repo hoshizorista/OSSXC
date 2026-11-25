@@ -1,0 +1,25 @@
+# Model checkpoints and packed binaries (generated locally via scripts/prepare_weights.py)
+hf_model/
+compressed/
+*.safetensors
+*.pt
+*.bin
+*.rans
+
+# Compiled native engine artifacts (built locally via engine/build_windows.ps1 or build_linux.sh)
+engine/*.dll
+engine/*.so
+engine/*.lib
+engine/*.exp
+engine/*.pdb
+engine/*.obj
+engine/ptxas_engine_report.txt
+
+# Python / OS / IDE
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.DS_Store
+Thumbs.db

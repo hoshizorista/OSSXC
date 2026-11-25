@@ -1,0 +1,25 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "ossxc": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "OSSXC Local (GPT-OSS-20B MXFP4)",
+      "options": {
+        "baseURL": "http://127.0.0.1:8000/v1",
+        "apiKey": "ossxc-local"
+      },
+      "models": {
+        "openai/gpt-oss-20b": {
+          "name": "GPT-OSS-20B (OSSXC Native MXFP4 • 64K)",
+          "reasoning": true,
+          "tool_call": true,
+          "limit": {
+            "context": 65536,
+            "output": 8192
+          }
+        }
+      }
+    }
+  },
+  "model": "ossxc/openai/gpt-oss-20b"
+}
