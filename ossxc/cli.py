@@ -45,6 +45,13 @@ def _handle_common_command(user_text: str, messages: list[dict], state: dict) ->
         except ValueError:
             print("[usage: /top_p 0.9]")
         return True, False
+    if user_text.startswith("/top_k "):
+        try:
+            state["top_k"] = max(0, int(user_text.split(maxsplit=1)[1]))
+            print(f"[top_k = {state['top_k']}]")
+        except ValueError:
+            print("[usage: /top_k 40]")
+        return True, False
     if user_text.startswith("/max "):
         try:
             state["max_tokens"] = int(user_text.split(maxsplit=1)[1])
@@ -78,9 +85,9 @@ def run_cli_direct(args: argparse.Namespace) -> None:
     mem = rt.engine.get_mem_info()
     print(f"Ready | VRAM={mem['total_engine_vram_gb']:.3f} GB ({mem['nvidia_smi_used_mib']:.0f} MiB) | "
           f"C_VRAM={mem['cache_capacity_slots']} slots | RSS={mem['process_ram_rss_gb']:.2f} GB")
-    print("Commands: /reset, /undo, /stats, /temp <v>, /top_p <v>, /max <n>, /reasoning <low|medium|high>, /quit\n")
+    print("Commands: /reset, /undo, /stats, /temp <v>, /top_p <v>, /top_k <n>, /max <n>, /reasoning <low|medium|high>, /quit\n")
 
-    state = {"temperature": args.temp, "top_p": args.top_p, "max_tokens": args.max_tokens, "effort": args.effort}
+    state = {"temperature": args.temp, "top_p": args.top_p, "top_k": args.top_k, "max_tokens": args.max_tokens, "effort": args.effort}
     messages = [{"role": "system", "content": "You are a concise, expert software engineering assistant."}]
 
     try:
@@ -115,6 +122,7 @@ def run_cli_direct(args: argparse.Namespace) -> None:
                     max_tokens=state["max_tokens"],
                     temperature=state["temperature"],
                     top_p=state["top_p"],
+                    top_k=state["top_k"],
                     cancel_event=cancel_ev,
                 ):
                     if ev["type"] == "meta":
@@ -149,10 +157,10 @@ def run_cli_direct(args: argparse.Namespace) -> None:
 def run_cli_http(args: argparse.Namespace) -> None:
     base = args.url.rstrip("/")
     endpoint = base if base.endswith("/v1/chat/completions") else (base + "/chat/completions" if base.endswith("/v1") else base + "/v1/chat/completions")
-    state = {"temperature": args.temp, "top_p": args.top_p, "max_tokens": args.max_tokens, "effort": args.effort}
+    state = {"temperature": args.temp, "top_p": args.top_p, "top_k": args.top_k, "max_tokens": args.max_tokens, "effort": args.effort}
     messages = [{"role": "system", "content": "You are a concise, expert software engineering assistant."}]
-    print(f"Connected to {endpoint} (temp={state['temperature']}, effort={state['effort']}).")
-    print("Commands: /reset, /undo, /temp <v>, /top_p <v>, /max <n>, /reasoning <low|medium|high>, /quit\n")
+    print(f"Connected to {endpoint} (temp={state['temperature']}, top_p={state['top_p']}, top_k={state['top_k']}, effort={state['effort']}).")
+    print("Commands: /reset, /undo, /temp <v>, /top_p <v>, /top_k <n>, /max <n>, /reasoning <low|medium|high>, /quit\n")
 
     while True:
         try:
@@ -175,6 +183,7 @@ def run_cli_http(args: argparse.Namespace) -> None:
             "stream": True,
             "temperature": state["temperature"],
             "top_p": state["top_p"],
+            "top_k": state["top_k"],
             "max_tokens": state["max_tokens"],
             "reasoning_effort": state["effort"],
         }).encode("utf-8")
@@ -230,6 +239,7 @@ def main() -> None:
     ap.add_argument("--pure-fp16-kv", action="store_true")
     ap.add_argument("--temp", type=float, default=0.0, help="Sampling temperature (0.0 = greedy + N-gram)")
     ap.add_argument("--top-p", type=float, default=0.95)
+    ap.add_argument("--top-k", type=int, default=0, help="Top-k sampling (0 = disabled)")
     ap.add_argument("--max-tokens", type=int, default=1024)
     ap.add_argument("--effort", choices=["low", "medium", "high"], default="medium")
     ap.add_argument("--show-thinking", action="store_true", help="Print Harmony analysis channel")

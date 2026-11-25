@@ -51,7 +51,7 @@ Running a `20.91B` MoE model at 64K context inside 6 GB VRAM normally hits three
 
 ### 1. Clone & Install Python Dependencies
 ```bash
-git clone <your-repo-url> OSSXC
+git clone https://github.com/hoshizorista/OSSXC.git
 cd OSSXC
 pip install -r requirements.txt
 ```
@@ -88,6 +88,7 @@ python -m ossxc.server --ctx 65536 --host 127.0.0.1 --port 8000
 ```
 - For **4K** pure FP16 (max `C_VRAM = 197` slots, fastest startup): `python -m ossxc.server --ctx 4096`
 - For **8 GB / 12 GB+ GPUs** (unlock even more cached expert slots!): `python -m ossxc.server --ctx 65536 --ceiling-gb 7.2`
+- Server-side default sampling flags: `--temp 0.8 --top-p 0.8 --top-k 40` (add `--override-sampling` to enforce even when clients pass their own values)
 - Environment overrides: `OSSXC_MODEL_DIR`, `OSSXC_WEIGHTS_DIR`, `OSSXC_ENGINE_LIB`
 
 ### 5. Interactive CLI Chat (Optional)
@@ -98,7 +99,7 @@ python -m ossxc.cli --url http://127.0.0.1:8000 --temp 0.6 --show-thinking
 # Or run directly without starting the HTTP server
 python -m ossxc.cli --ctx 65536 --temp 0.6
 ```
-In-chat slash commands: `/temp <val>`, `/top_p <val>`, `/max <n>`, `/reasoning <low|medium|high>`, `/undo` (branches back via Ring-128 snapshot!), `/reset`, `/stats`, `/quit`.
+In-chat slash commands: `/temp <val>`, `/top_p <val>`, `/top_k <n>`, `/max <n>`, `/reasoning <low|medium|high>`, `/undo` (branches back via Ring-128 snapshot!), `/reset`, `/stats`, `/quit`.
 
 ---
 
@@ -175,7 +176,8 @@ OSSXC/
 
 ## Credits & License
 
-Created by **Juan** & **Aria (Antigravity)**.
+Created by **Juan** & **Aria**.  
+**Tools:** Antigravity, CC.
 
 Released under the **MIT License** — see [`LICENSE`](LICENSE) for details.  
 Target model weights (`openai/gpt-oss-20b`) are subject to OpenAI's respective model license on Hugging Face.

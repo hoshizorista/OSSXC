@@ -117,10 +117,30 @@ def sample_token(
     logits: np.ndarray,
     temperature: float = 0.0,
     top_p: float = 1.0,
+    top_k: int = 0,
     rng: np.random.Generator | None = None,
 ) -> int:
-    if temperature <= 0.0:
+    if temperature <= 0.0 or top_k == 1:
         return int(np.argmax(logits))
+    g = rng if rng is not None else np.random.default_rng()
+    vocab_size = logits.shape[0]
+    if top_k > 0 and top_k < vocab_size:
+        part_idx = np.argpartition(logits, -top_k)[-top_k:]
+        part_vals = logits[part_idx]
+        order = np.argsort(part_vals)[::-1]
+        cand_idx = part_idx[order]
+        scaled = part_vals[order].astype(np.float64) / float(temperature)
+        scaled -= scaled[0]
+        probs = np.exp(scaled)
+        probs /= np.sum(probs)
+        if 0.0 < top_p < 1.0:
+            csum = np.cumsum(probs)
+            cutoff = min(len(probs), int(np.searchsorted(csum, top_p)) + 1)
+            cand_idx = cand_idx[:cutoff]
+            probs = probs[:cutoff]
+            probs /= np.sum(probs)
+        return int(g.choice(cand_idx, p=probs))
+
     scaled = logits.astype(np.float64) / float(temperature)
     scaled -= np.max(scaled)
     probs = np.exp(scaled)
@@ -129,14 +149,12 @@ def sample_token(
         order = np.argsort(probs)[::-1]
         sorted_p = probs[order]
         csum = np.cumsum(sorted_p)
-        cutoff = int(np.searchsorted(csum, top_p)) + 1
+        cutoff = min(len(sorted_p), int(np.searchsorted(csum, top_p)) + 1)
         keep_idx = order[:cutoff]
-        keep_p = probs[keep_idx]
+        keep_p = sorted_p[:cutoff]
         keep_p /= np.sum(keep_p)
-        g = rng if rng is not None else np.random.default_rng()
         return int(g.choice(keep_idx, p=keep_p))
-    g = rng if rng is not None else np.random.default_rng()
-    return int(g.choice(len(probs), p=probs))
+    return int(g.choice(vocab_size, p=probs))
 
 
 class PersistentOSSXCRuntime:
@@ -362,6 +380,7 @@ class PersistentOSSXCRuntime:
         max_tokens: int = 2048,
         temperature: float = 0.0,
         top_p: float = 1.0,
+        top_k: int = 0,
         stop_strings: list[str] | None = None,
         cancel_event: threading.Event | None = None,
         seed: int | None = None,
@@ -378,7 +397,7 @@ class PersistentOSSXCRuntime:
             use_ngram = (temperature <= 0.0) and self.enable_ngram_spec
             ngram_idx = _FastNgramIndex(self.kv_tokens, min_n=5, max_n=6) if use_ngram else None
 
-            next_tok = sample_token(logits, temperature=temperature, top_p=top_p, rng=rng)
+            next_tok = sample_token(logits, temperature=temperature, top_p=top_p, top_k=top_k, rng=rng)
             t_gen0 = time.perf_counter()
             finish_reason: str | None = None
             spec_verify_calls = 0
@@ -499,7 +518,7 @@ class PersistentOSSXCRuntime:
                     if ngram_idx is not None:
                         ngram_idx.extend([int(cur_tok)])
                     self.last_logits = lg
-                    nxt = sample_token(lg, temperature=temperature, top_p=top_p, rng=rng)
+                    nxt = sample_token(lg, temperature=temperature, top_p=top_p, top_k=top_k, rng=rng)
                     d, stp = emit_and_check(nxt)
                     yield {"type": "delta", "delta": d, "token_id": nxt}
                     if stp:

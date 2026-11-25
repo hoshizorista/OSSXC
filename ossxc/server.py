@@ -52,13 +52,26 @@ def _is_client_disconnected(sock: socket.socket) -> bool:
 
 
 class OSSXCServerState:
-    def __init__(self, runtime: PersistentOSSXCRuntime, model_id: str = MODEL_ID):
+    def __init__(
+        self,
+        runtime: PersistentOSSXCRuntime,
+        model_id: str = MODEL_ID,
+        default_temperature: float = 0.0,
+        default_top_p: float = 1.0,
+        default_top_k: int = 0,
+        override_sampling: bool = False,
+    ):
         self.runtime = runtime
         self.model_id = model_id
+        self.default_temperature = max(0.0, float(default_temperature))
+        self.default_top_p = min(1.0, max(1e-4, float(default_top_p)))
+        self.default_top_k = max(0, int(default_top_k))
+        self.override_sampling = bool(override_sampling)
         self.start_time = int(time.time())
         self.last_continuity: dict[str, Any] | None = None
         self.last_finish_reason: str | None = None
         self.last_completion_tokens: int = 0
+        self.last_sampling: dict[str, Any] | None = None
         self.request_count = 0
 
 
@@ -135,6 +148,13 @@ def _make_handler(state: OSSXCServerState):
                     "last_continuity": state.last_continuity,
                     "last_finish_reason": state.last_finish_reason,
                     "last_completion_tokens": state.last_completion_tokens,
+                    "default_sampling": {
+                        "temperature": state.default_temperature,
+                        "top_p": state.default_top_p,
+                        "top_k": state.default_top_k,
+                        "override_sampling": state.override_sampling,
+                    },
+                    "last_sampling": state.last_sampling,
                     "memory": mem,
                 })
                 return
@@ -169,10 +189,18 @@ def _make_handler(state: OSSXCServerState):
                 raw_max = req.get("max_tokens")
             max_tokens = 2048 if raw_max is None else max(1, int(raw_max))
 
-            raw_temp = req.get("temperature")
-            temperature = 0.0 if raw_temp is None else max(0.0, float(raw_temp))
-            raw_top_p = req.get("top_p")
-            top_p = 1.0 if raw_top_p is None else min(1.0, max(1e-4, float(raw_top_p)))
+            if state.override_sampling:
+                temperature = state.default_temperature
+                top_p = state.default_top_p
+                top_k = state.default_top_k
+            else:
+                raw_temp = req.get("temperature")
+                temperature = state.default_temperature if raw_temp is None else max(0.0, float(raw_temp))
+                raw_top_p = req.get("top_p")
+                top_p = state.default_top_p if raw_top_p is None else min(1.0, max(1e-4, float(raw_top_p)))
+                raw_top_k = req.get("top_k")
+                top_k = state.default_top_k if raw_top_k is None else max(0, int(raw_top_k))
+            state.last_sampling = {"temperature": temperature, "top_p": top_p, "top_k": top_k}
 
             raw_effort = (
                 req.get("reasoning_effort")
@@ -224,11 +252,11 @@ def _make_handler(state: OSSXCServerState):
 
             if stream:
                 self._handle_stream(
-                    req_id, created, req_model, prompt_ids, max_tokens, temperature, top_p, stop_strings, seed, cancel_ev
+                    req_id, created, req_model, prompt_ids, max_tokens, temperature, top_p, top_k, stop_strings, seed, cancel_ev
                 )
             else:
                 self._handle_non_stream(
-                    req_id, created, req_model, prompt_ids, max_tokens, temperature, top_p, stop_strings, seed, cancel_ev
+                    req_id, created, req_model, prompt_ids, max_tokens, temperature, top_p, top_k, stop_strings, seed, cancel_ev
                 )
 
         def _write_sse(self, data_str: str) -> bool:
@@ -249,6 +277,7 @@ def _make_handler(state: OSSXCServerState):
             max_tokens: int,
             temperature: float,
             top_p: float,
+            top_k: int,
             stop_strings: list[str],
             seed: int | None,
             cancel_ev: threading.Event,
@@ -293,6 +322,7 @@ def _make_handler(state: OSSXCServerState):
                     max_tokens=max_tokens,
                     temperature=temperature,
                     top_p=top_p,
+                    top_k=top_k,
                     stop_strings=stop_strings,
                     cancel_event=cancel_ev,
                     seed=seed,
@@ -395,6 +425,7 @@ def _make_handler(state: OSSXCServerState):
             max_tokens: int,
             temperature: float,
             top_p: float,
+            top_k: int,
             stop_strings: list[str],
             seed: int | None,
             cancel_ev: threading.Event,
@@ -406,6 +437,7 @@ def _make_handler(state: OSSXCServerState):
                 max_tokens=max_tokens,
                 temperature=temperature,
                 top_p=top_p,
+                top_k=top_k,
                 stop_strings=stop_strings,
                 cancel_event=cancel_ev,
                 seed=seed,
@@ -466,6 +498,10 @@ def create_server(
     hybrid_kv: bool | None = None,
     lookahead_prefetch: bool = True,
     max_vram_ceiling_bytes: int | None = None,
+    default_temperature: float = 0.0,
+    default_top_p: float = 1.0,
+    default_top_k: int = 0,
+    override_sampling: bool = False,
 ) -> tuple[ThreadingHTTPServer, OSSXCServerState]:
     rt = PersistentOSSXCRuntime(
         model_dir=model_dir,
@@ -479,7 +515,13 @@ def create_server(
         lookahead_prefetch=lookahead_prefetch,
         max_vram_ceiling_bytes=max_vram_ceiling_bytes,
     )
-    state = OSSXCServerState(rt)
+    state = OSSXCServerState(
+        rt,
+        default_temperature=default_temperature,
+        default_top_p=default_top_p,
+        default_top_k=default_top_k,
+        override_sampling=override_sampling,
+    )
     server = ThreadingHTTPServer((host, port), _make_handler(state))
     server.daemon_threads = True
     return server, state
@@ -493,6 +535,10 @@ def main() -> None:
     ap.add_argument("--model-dir", default=HF_MODEL_DIR, help="Path to HF tokenizer/chat_template directory")
     ap.add_argument("--weights-dir", default=WEIGHTS_DIR, help="Path to packed OSSXC weights directory")
     ap.add_argument("--ceiling-gb", type=float, default=None, help="Optional VRAM arena ceiling in decimal GB (e.g. 5.19 for 6GB GPUs, 7.5 for 8GB GPUs)")
+    ap.add_argument("--temp", type=float, default=0.0, help="Default sampling temperature when client omits it (0.0 = greedy + N-gram)")
+    ap.add_argument("--top-p", type=float, default=1.0, help="Default nucleus sampling top_p when client omits it (default: 1.0)")
+    ap.add_argument("--top-k", type=int, default=0, help="Default top_k sampling when client omits it (0 = disabled)")
+    ap.add_argument("--override-sampling", action="store_true", help="Force server --temp/--top-p/--top-k even when client specifies values")
     ap.add_argument("--pure-fp16-kv", action="store_true", help="Force Pure FP16 KV even when --ctx > 4096")
     ap.add_argument("--no-ngram", action="store_true", help="Disable greedy N-gram speculation")
     ap.add_argument("--no-prefetch", action="store_true", help="Disable Inter-Layer Lookahead DMA Prefetch")
@@ -502,8 +548,13 @@ def main() -> None:
     ceiling_bytes = int(args.ceiling_gb * 1e9) if args.ceiling_gb is not None else None
     kv_label = "HYBRID K-FP16 + V_pc32 (exact boundary)" if use_hybrid else "Pure FP16"
     pref_label = "OFF" if args.no_prefetch else "ON (M3_ema, 0-copy swap, tau=0.04)"
+    samp_mode = "FORCED" if args.override_sampling else "default"
+    samp_label = f"temp={args.temp}, top_p={args.top_p}, top_k={args.top_k} ({samp_mode})"
 
-    print(f"Loading OSSXC — {MODEL_ID} (MXFP4 native 4-bit, KV={args.ctx} [{kv_label}], prefetch={pref_label}, ngram={not args.no_ngram})...")
+    print(
+        f"Loading OSSXC — {MODEL_ID} (MXFP4 native 4-bit, KV={args.ctx} [{kv_label}], "
+        f"prefetch={pref_label}, ngram={not args.no_ngram}, sampling=[{samp_label}])..."
+    )
     server, state = create_server(
         host=args.host,
         port=args.port,
@@ -514,6 +565,10 @@ def main() -> None:
         hybrid_kv=use_hybrid,
         lookahead_prefetch=not args.no_prefetch,
         max_vram_ceiling_bytes=ceiling_bytes,
+        default_temperature=args.temp,
+        default_top_p=args.top_p,
+        default_top_k=args.top_k,
+        override_sampling=args.override_sampling,
     )
     mem = state.runtime.engine.get_mem_info()
     lm_ms = state.runtime.engine.benchmark_lmhead(iters=10, use_fast=True)
